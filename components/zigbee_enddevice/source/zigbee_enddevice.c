@@ -151,6 +151,18 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 
             device_joined = true;
             
+            // Obtener y mostrar la network key recibida del coordinador
+            uint8_t received_network_key[16];
+            if (esp_zb_secur_primary_network_key_get(received_network_key) == ESP_OK) {
+                ESP_LOGI(TAG, "Network Key recibida: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
+                    received_network_key[0], received_network_key[1], received_network_key[2], received_network_key[3],
+                    received_network_key[4], received_network_key[5], received_network_key[6], received_network_key[7],
+                    received_network_key[8], received_network_key[9], received_network_key[10], received_network_key[11],
+                    received_network_key[12], received_network_key[13], received_network_key[14], received_network_key[15]);
+            } else {
+                ESP_LOGW(TAG, "No se pudo obtener la network key recibida");
+            }
+            
             /* Send current value to coordinator after joining */
             uint8_t current_value;
             if (s_value_lock) xSemaphoreTake(s_value_lock, portMAX_DELAY);
@@ -159,10 +171,17 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             
             ESP_LOGI(TAG, "Sending initial value to coordinator: 0x%02X", (int)current_value);
             zigbee_endDevice_UpdateData(current_value);
+
         } else {
             ESP_LOGW(TAG, "Network steering was not successful (status: %d). Retrying in 5 seconds...", err_status);
             esp_zb_scheduler_alarm((esp_zb_callback_t)esp_zb_bdb_start_top_level_commissioning, ESP_ZB_BDB_MODE_NETWORK_STEERING, 5000);
         }
+        break;
+    
+    case ESP_ZB_ZDO_DEVICE_UNAVAILABLE:
+        esp_zb_zdo_device_unavailable_params_t *unavail_params =
+            (esp_zb_zdo_device_unavailable_params_t *)esp_zb_app_signal_get_params(signal_struct->p_app_signal);
+        ESP_LOGW(TAG, "Dispositivo no disponible - addr: 0x%04hx", unavail_params->short_addr);
         break;
 
     default:
@@ -223,12 +242,14 @@ static void zigbee_init_and_start(void)
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED,
         .install_code_policy = false,
         .nwk_cfg = {
-            .zczr_cfg = {
-                .max_children = 10,
+            .zed_cfg = {
+                .ed_timeout = ESP_ZB_ED_AGING_TIMEOUT_256MIN, // Timeout largo para menos Data Request
+                .keep_alive = 60000, // 60 segundos (ajustable)
             },
         },
     };
 
+    
     esp_zb_init(&zb_nwk_cfg);
 
     esp_zb_ep_list_t *ep_list = custom_ep_list_create();
